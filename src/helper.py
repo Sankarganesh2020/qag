@@ -32,6 +32,8 @@ class LLMPipeline:
             timeout=None,
             max_retries=2,
         )
+        # Create embeddings 
+        self.embeddings = AzureOpenAIEmbeddings(model="text-embedding-ada-002")        
 
     def file_processing_qa_gen(self, file_path):
         """
@@ -92,9 +94,8 @@ class LLMPipeline:
         )
         ques = ques_gen_chain.invoke(document_ques_gen)
 
-        # Create embeddings and vector store
-        embeddings = AzureOpenAIEmbeddings(model="text-embedding-ada-002")
-        vector_store = FAISS.from_documents(document_answer_gen, embeddings)
+        # Create vector store
+        vector_store = FAISS.from_documents(document_answer_gen, self.embeddings)
 
         # Filter the generated questions
         ques_list = ques.get("output_text").split("\n")
