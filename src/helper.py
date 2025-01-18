@@ -1,17 +1,23 @@
 import os
 from dotenv import load_dotenv
-from langchain_community.document_loaders import PyPDFLoader
+from langchain_community.document_loaders import PyPDFLoader, UnstructuredURLLoader
 from langchain.docstore.document import Document
 from langchain_text_splitters import RecursiveCharacterTextSplitter
 from langchain.prompts import PromptTemplate
 from langchain_core.prompts import ChatPromptTemplate
 from langchain.chains.summarize import load_summarize_chain
+import faiss
 from langchain_community.vectorstores import FAISS
+from langchain_community.docstore.in_memory import InMemoryDocstore
 from langchain.chains import create_retrieval_chain
 from langchain.chains.combine_documents import create_stuff_documents_chain
 from langchain_openai import AzureChatOpenAI, AzureOpenAIEmbeddings
 from src.prompt import *
-
+import nltk
+nltk.download('punkt')
+nltk.download('punkt_tab')
+nltk.download('averaged_perceptron_tagger')
+nltk.download('averaged_perceptron_tagger_eng')
 class LLMPipeline:
     def __init__(self):
         load_dotenv()
@@ -33,7 +39,29 @@ class LLMPipeline:
             max_retries=2,
         )
         # Create embeddings 
-        self.embeddings = AzureOpenAIEmbeddings(model="text-embedding-ada-002")        
+        self.embeddings = AzureOpenAIEmbeddings(model="text-embedding-ada-002")
+        # # self.vector_store = FAISS("", self.embeddings) 
+        # index = faiss.IndexFlatL2(len(self.embeddings.embed_query("hello world")))
+        # self.vector_store = FAISS(
+        #     embedding_function=self.embeddings,
+        #     index=index,
+        #     docstore= InMemoryDocstore(),
+        #     index_to_docstore_id={}
+        # )
+
+    def chunk_documents(self, content):
+        splitter = RecursiveCharacterTextSplitter(chunk_size=10000, chunk_overlap=200)
+        documents = splitter.split_documents(content)
+        return documents
+
+    def update_vector_store(self, content):
+        self.vector_store = FAISS.from_documents(content, self.embeddings)
+        self.vector_store.save_local("faiss_store")
+        
+
+    def get_vector_store(self):        
+        self.vector_store = FAISS.load_local("faiss_store", self.embeddings, allow_dangerous_deserialization=True)
+                      
 
     def file_processing_qa_gen(self, file_path):
         """
@@ -57,7 +85,7 @@ class LLMPipeline:
 
         return documents1, documents2
 
-    def qa_chain(self, vector_store):
+    def qa_chain(self):
         """
         Create a question-answering chain using the provided vector store.
         """
@@ -68,7 +96,7 @@ class LLMPipeline:
             ]
         )
         question_answer_chain = create_stuff_documents_chain(self.llm, prompt)
-        answer_generation_chain = create_retrieval_chain(vector_store.as_retriever(), question_answer_chain)
+        answer_generation_chain = create_retrieval_chain(self.vector_store.as_retriever(), question_answer_chain)
         return answer_generation_chain
 
     def generate_qa_gen_pipeline(self, file_path):
@@ -95,7 +123,7 @@ class LLMPipeline:
         ques = ques_gen_chain.invoke(document_ques_gen)
 
         # Create vector store
-        vector_store = FAISS.from_documents(document_answer_gen, self.embeddings)
+        self.update_vector_store(document_answer_gen)
 
         # Filter the generated questions
         ques_list = ques.get("output_text").split("\n")
@@ -104,12 +132,39 @@ class LLMPipeline:
         ]
 
         # Create the answer generation chain
-        answer_generation_chain = self.qa_chain(vector_store)
+        answer_generation_chain = self.qa_chain()
 
         return answer_generation_chain, filtered_ques_list
+
+
+    def create_website_knowledge_base(self, urls):
+        loaders = UnstructuredURLLoader(urls=urls)
+        data = loaders.load()
+        documents = self.chunk_documents(data)
+        # Create vector store
+        self.update_vector_store(documents) 
+        website_qa_chain = self.qa_chain()
+        return website_qa_chain
+
 
 
 def llm_qa_gen_pipeline(file_path):
     pipeline = LLMPipeline()
     answer_chain, questions = pipeline.generate_qa_gen_pipeline(file_path)
     return answer_chain, questions
+
+
+
+def llm_website_content_pipeline(url):
+    URLs=[]
+    URLs.append(url)
+    pipeline = LLMPipeline()
+    pipeline.create_website_knowledge_base(URLs)
+    return "Ok"
+
+
+def get_website_chatbot_response():
+    pipeline = LLMPipeline()
+    pipeline.get_vector_store()
+    website_qa_chain = pipeline.qa_chain()
+    return website_qa_chain

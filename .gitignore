@@ -2,3 +2,4 @@
 .venv
 static/docs
 static/output
+faiss_store
